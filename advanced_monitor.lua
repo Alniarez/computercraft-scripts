@@ -107,10 +107,11 @@ function MonitorModule.addTab(name, color)
     if not MonitorModule.tabs[name] then
         MonitorModule.tabs[name] = {
             lines = {},
-            color = color or colors.white
+            color = color or colors.white,
+            width = 0, -- << NEW widest line
+            hscroll = 0, -- horizontal scroll offset
+            vscroll = 0    -- vertical scroll offset
         }
-
-        -- preserve insertion order
         table.insert(MonitorModule.tabOrder, name)
     end
 
@@ -128,6 +129,9 @@ function MonitorModule.switchTab(name)
     end
 
     MonitorModule.currentTab = name
+    local tab = MonitorModule.tabs[name]
+    tab.hscroll = 0
+    tab.vscroll = 0
     MonitorModule.render()
 end
 
@@ -138,8 +142,15 @@ function MonitorModule.printToTab(tabName, text)
     end
 
     local tab = MonitorModule.tabs[tabName]
-    table.insert(tab.lines, tostring(text))
+    text = tostring(text)
+    table.insert(tab.lines, text)
 
+    -- Track widest line
+    if #text > tab.width then
+        tab.width = #text
+    end
+
+    -- Only re-render active tab
     if tabName == MonitorModule.currentTab then
         MonitorModule.render()
     end
@@ -166,12 +177,15 @@ function MonitorModule.render()
     ----------------------------------------------------
     MonitorModule.menuHitboxes = {}
 
+    -- Force-clear menu bar (fixes dropdown shadow artifacts)
     mon.setCursorPos(1, 2)
-    mon.clearLine()
+    mon.setBackgroundColor(colors.black)
+    mon.setTextColor(colors.white)
+    mon.write(string.rep(" ", w))
+
 
     local xpos = 1
     for _, name in ipairs(MonitorModule.menuOrder) do
-        local menu = MonitorModule.menuItems[name]
         local label = "[" .. name .. "]"
         local len = #label
 
@@ -180,7 +194,6 @@ function MonitorModule.render()
         mon.setCursorPos(xpos, 2)
 
         if MonitorModule.openDropdown == name then
-            -- MENU OPEN → greyed text
             mon.setBackgroundColor(colors.black)
             mon.setTextColor(colors.lightGray)
         else
@@ -196,61 +209,50 @@ function MonitorModule.render()
     mon.setTextColor(colors.white)
 
     ----------------------------------------------------
-    -- 3. TABS (always on line 3)
+    -- 2. TABS (line 3)
     ----------------------------------------------------
     local tabLine = 3
     MonitorModule.tabHitboxes = {}
 
+    -- CLEAR TAB LINE (fixes leftover blue background)
     mon.setCursorPos(1, tabLine)
-    mon.clearLine()
+    mon.setBackgroundColor(colors.black)
+    mon.setTextColor(colors.white)
+    mon.write(string.rep(" ", w))
 
-    local xpos = 1
+    xpos = 1
     for _, name in ipairs(MonitorModule.tabOrder) do
         local tabData = MonitorModule.tabs[name]
         local tabColor = tabData.color or colors.white
 
-        ------------------------------------------------
-        -- ACTIVE TAB
-        ------------------------------------------------
         if MonitorModule.currentTab == name then
-            -- Format: "> Tab <"
             local text = "> " .. name .. " <"
-
-            -- Hitbox
             local len = #text
+
             MonitorModule.tabHitboxes[name] = { x1 = xpos, x2 = xpos + len - 1 }
 
             mon.setCursorPos(xpos, tabLine)
-
-            -- Background of active tab
             mon.setBackgroundColor(colors.gray)
 
-            -- Write "> " in tab color
             mon.setTextColor(tabColor)
             mon.write("> ")
 
-            -- Write tab name in normal white
             mon.setTextColor(colors.black)
             mon.write(name)
 
-            -- Write " <" in tab color
             mon.setTextColor(tabColor)
             mon.write(" <")
 
             xpos = xpos + len + 1
         else
-            ------------------------------------------------
-            -- INACTIVE TAB
-            ------------------------------------------------
             local text = " " .. name .. " "
             local len = #text
+
             MonitorModule.tabHitboxes[name] = { x1 = xpos, x2 = xpos + len - 1 }
 
             mon.setCursorPos(xpos, tabLine)
-
             mon.setBackgroundColor(colors.black)
-            mon.setTextColor(tabColor)       -- INACTIVE TAB USES ITS COLOR
-
+            mon.setTextColor(tabColor)
             mon.write(text)
 
             xpos = xpos + len + 1
@@ -260,38 +262,39 @@ function MonitorModule.render()
     mon.setBackgroundColor(colors.black)
     mon.setTextColor(colors.white)
 
-
     ----------------------------------------------------
-    -- 4. TAB CONTENT + COLORED PADDING (1 cell).
-    -- TODO: Scroll???
+    -- 3. TAB CONTENT BORDER
     ----------------------------------------------------
     local tab = MonitorModule.tabs[MonitorModule.currentTab]
     local contentTop = 4
 
-    -- Fallback color if no tab or no color
     local borderColor = (tab and tab.color) or colors.white
-
-    -- --- Draw colored border --------------------------------
-    mon.setBackgroundColor(borderColor)
-    mon.setTextColor(colors.black)
 
     -- Top border
     mon.setCursorPos(1, contentTop)
+    mon.setBackgroundColor(borderColor)
     mon.write(string.rep(" ", w))
 
     -- Bottom border
     mon.setCursorPos(1, h)
     mon.write(string.rep(" ", w))
 
-    -- Left + right borders
+    -- Left + right borders (but do NOT override scroll buttons)
     for y = contentTop + 1, h - 1 do
-        mon.setCursorPos(1, y)
-        mon.write(" ")        -- left border
+        -- left border
+        if y ~= (contentTop + 1) and y ~= (h - 1) then
+            mon.setCursorPos(1, y)
+            mon.write(" ")
+        end
+
+        -- right border
         mon.setCursorPos(w, y)
-        mon.write(" ")        -- right border
+        mon.write(" ")
     end
 
-    -- --- Clear inner area (inside the border) ---------------
+    ----------------------------------------------------
+    -- 4. CLEAR INNER AREA
+    ----------------------------------------------------
     local innerX1 = 2
     local innerX2 = w - 1
     local innerY1 = contentTop + 1
@@ -306,25 +309,244 @@ function MonitorModule.render()
         mon.write(string.rep(" ", innerWidth))
     end
 
-    -- --- Draw tab content inside the inner area -------------
+    ----------------------------------------------------
+    -- 5. DRAW TAB CONTENT (with both scrolls)
+    ----------------------------------------------------
     if tab then
         local y = innerY1
-        for _, line in ipairs(tab.lines) do
-            if y > innerY2 then
-                break
+        local startLine = 1 + tab.vscroll
+        local endLine = #tab.lines
+
+        for i = startLine, endLine do
+            if y > innerY2 then break end
+            local line = tab.lines[i]
+
+            if line then
+                local shifted = line:sub(tab.hscroll + 1)
+                if #shifted > innerWidth then
+                    shifted = shifted:sub(1, innerWidth)
+                end
+
+                mon.setCursorPos(innerX1, y)
+                mon.write(shifted)
             end
-            local text = tostring(line)
-            if #text > innerWidth then
-                text = text:sub(1, innerWidth) -- clip to fit inside padding
-            end
-            mon.setCursorPos(innerX1, y)
-            mon.write(text)
+
             y = y + 1
         end
     end
 
+    MonitorModule.innerWidth = innerWidth
+    MonitorModule.innerHeight = innerY2 - innerY1 + 1
+
     ----------------------------------------------------
-    -- 5. DRAW DROPDOWN LAST (on top of tabs + content)
+    -- 6. HORIZONTAL SCROLL BUTTONS (bottom)
+    ----------------------------------------------------
+    local bottomY = h
+    local scrollColor = (tab and tab.color) or colors.white
+
+    local leftLabel  = " < "
+    local rightLabel = " > "
+
+    -- left button
+    local leftX = 2
+    mon.setCursorPos(leftX, bottomY)
+    mon.setBackgroundColor(colors.black)
+    mon.setTextColor(scrollColor)
+    mon.write(leftLabel)
+
+    MonitorModule.scrollLeftHitbox = {
+        x1 = leftX,
+        x2 = leftX + #leftLabel - 1,
+        y = bottomY
+    }
+
+    -- right button
+    local rightX = w - (#rightLabel + 1)
+    mon.setCursorPos(rightX, bottomY)
+    mon.setBackgroundColor(colors.black)
+    mon.setTextColor(scrollColor)
+    mon.write(rightLabel)
+
+    MonitorModule.scrollRightHitbox = {
+        x1 = rightX,
+        x2 = rightX + #rightLabel - 1,
+        y = bottomY
+    }
+
+    mon.setBackgroundColor(colors.black)
+    mon.setTextColor(colors.white)
+
+    ----------------------------------------------------
+    -- 6b. HORIZONTAL SCROLLBAR (fixed 7-cell thumb)
+    ----------------------------------------------------
+    local maxHScroll = math.max(0, tab.width - MonitorModule.innerWidth)
+
+    if maxHScroll > 0 then
+        local barY = h                       -- bottom border line
+        local barX1 = 2 + #leftLabel         -- after "<"
+        local barX2 = rightX - 1             -- before ">"
+        local barWidth = barX2 - barX1 + 1
+
+        -- Thumb is always 7 characters: 1 black + 5 white + 1 black
+        local thumbWidth = 7
+
+        -- Movable range
+        local movable = barWidth - thumbWidth
+        if movable < 0 then movable = 0 end
+
+        -- Thumb position based on hscroll
+        local thumbPos = 0
+        if maxHScroll > 0 then
+            thumbPos = math.floor((tab.hscroll / maxHScroll) * movable)
+        end
+
+        local thumbStart = barX1 + thumbPos
+        local thumbEnd = thumbStart + thumbWidth - 1
+
+        ------------------------------------------------
+        -- Draw scrollbar track (border color)
+        ------------------------------------------------
+        for xx = barX1, barX2 do
+            mon.setCursorPos(xx, barY)
+            mon.setBackgroundColor(borderColor)
+            mon.write(" ")
+        end
+
+        ------------------------------------------------
+        -- Draw thumb (1 black, 5 white, 1 black)
+        ------------------------------------------------
+        local x = thumbStart
+
+        -- left black cell
+        mon.setCursorPos(x, barY)
+        mon.setBackgroundColor(colors.black)
+        mon.write(" ")
+        x = x + 1
+
+        -- 5 white cells
+        for i = 1, 5 do
+            mon.setCursorPos(x, barY)
+            mon.setBackgroundColor(colors.white)
+            mon.write(" ")
+            x = x + 1
+        end
+
+        -- right black cell
+        mon.setCursorPos(x, barY)
+        mon.setBackgroundColor(colors.black)
+        mon.write(" ")
+    end
+
+
+    ----------------------------------------------------
+    -- 7. VERTICAL SCROLL BUTTONS (on left border)
+    ----------------------------------------------------
+    local upLabel = "^"
+    local downLabel = "v"
+
+    local scrollX = 1
+    local upY = innerY1
+    local downY = innerY2
+
+    -- Choose text color that contrasts the border
+    local arrowTextColor = colors.black
+    if borderColor == colors.black then
+        arrowTextColor = scrollColor  -- fallback
+    end
+
+    -- UP BUTTON
+    mon.setCursorPos(scrollX, upY)
+    mon.setBackgroundColor(arrowTextColor)
+    mon.setTextColor(borderColor)
+    mon.write(upLabel)
+
+    MonitorModule.scrollUpHitbox = {
+        x1 = scrollX,
+        x2 = scrollX,
+        y = upY
+    }
+
+    -- DOWN BUTTON
+    mon.setCursorPos(scrollX, downY)
+    mon.setBackgroundColor(arrowTextColor)
+    mon.setTextColor(borderColor)
+    mon.write(downLabel)
+
+    MonitorModule.scrollDownHitbox = {
+        x1 = scrollX,
+        x2 = scrollX,
+        y = downY
+    }
+
+    ----------------------------------------------------
+    -- 7b. VERTICAL SCROLLBAR (fixed 7-cell thumb)
+    ----------------------------------------------------
+    local totalLines = #tab.lines
+    local visibleLines = MonitorModule.innerHeight
+    local maxVScroll = math.max(0, totalLines - visibleLines)
+
+    -- Only draw a scrollbar if there is something to scroll
+    if maxVScroll > 0 then
+        local barX = 1
+        local barY1 = innerY1 + 1          -- below ^
+        local barY2 = innerY2 - 1          -- above v
+        local barHeight = barY2 - barY1 + 1
+
+        -- Thumb height: exactly 7 rows
+        local thumbHeight = 7
+        local topBlack = 1
+        local midWhite = 5
+        local bottomBlack = 1
+
+        -- Range thumb can move
+        local movable = barHeight - thumbHeight
+        if movable < 0 then movable = 0 end
+
+        -- Thumb position proportional to vscroll
+        local thumbOffset = 0
+        if maxVScroll > 0 then
+            thumbOffset = math.floor((tab.vscroll / maxVScroll) * movable)
+        end
+
+        local thumbTop = barY1 + thumbOffset
+        local thumbBottom = thumbTop + thumbHeight - 1
+
+        ------------------------------------------------
+        -- Draw full scrollbar background (border color)
+        ------------------------------------------------
+        for yy = barY1, barY2 do
+            mon.setCursorPos(barX, yy)
+            mon.setBackgroundColor(borderColor)
+            mon.write(" ")
+        end
+
+        ------------------------------------------------
+        -- Draw fixed 7-cell thumb
+        ------------------------------------------------
+        local row = thumbTop
+
+        -- 1 black cell
+        mon.setCursorPos(barX, row)
+        mon.setBackgroundColor(colors.black)
+        mon.write(" ")
+        row = row + 1
+
+        -- 5 white cells
+        for i = 1, midWhite do
+            mon.setCursorPos(barX, row)
+            mon.setBackgroundColor(colors.white)
+            mon.write(" ")
+            row = row + 1
+        end
+
+        -- 1 black cell
+        mon.setCursorPos(barX, row)
+        mon.setBackgroundColor(colors.black)
+        mon.write(" ")
+    end
+
+    ----------------------------------------------------
+    -- 8. DROPDOWN MENU (draw last)
     ----------------------------------------------------
     MonitorModule.dropdownHitboxes = {}
 
@@ -332,22 +554,16 @@ function MonitorModule.render()
         local menu = MonitorModule.menuItems[MonitorModule.openDropdown]
         if menu and menu.dropdown then
             local x = MonitorModule.menuHitboxes[MonitorModule.openDropdown].x1
-            local y = 3   -- dropdown appears under menu bar
+            local y = 3
 
-            ------------------------------------------------
-            -- Compute max width of all menu items
-            ------------------------------------------------
+            -- find widest label
             local maxWidth = 0
             for _, entry in ipairs(menu.dropdown) do
-                if #entry.label > maxWidth then
-                    maxWidth = #entry.label
-                end
+                maxWidth = math.max(maxWidth, #entry.label)
             end
-            maxWidth = maxWidth + 2 -- padding
+            maxWidth = maxWidth + 2
 
-            ------------------------------------------------
-            -- DRAW SHADOW FIRST
-            ------------------------------------------------
+            -- shadow
             mon.setBackgroundColor(colors.gray)
             mon.setTextColor(colors.gray)
 
@@ -359,163 +575,124 @@ function MonitorModule.render()
                 shadowY = shadowY + 1
             end
 
-            ------------------------------------------------
-            -- DRAW DROPDOWN BOX
-            ------------------------------------------------
+            -- dropdown
             for i, entry in ipairs(menu.dropdown) do
-                local label = entry.label
-
-                -- Register hitbox
-                table.insert(MonitorModule.dropdownHitboxes, {
-                    x1 = x,
-                    x2 = x + maxWidth - 1,
-                    y = y,
-                    callback = entry.callback,
-                })
-
                 mon.setCursorPos(x, y)
                 mon.setBackgroundColor(colors.blue)
                 mon.setTextColor(colors.white)
 
-                local padding = maxWidth - (#label + 1)
-                mon.write(" " .. label .. string.rep(" ", padding))
+                local padding = maxWidth - (#entry.label + 1)
+                mon.write(" " .. entry.label .. string.rep(" ", padding))
+
+                table.insert(MonitorModule.dropdownHitboxes, {
+                    label = entry.label,
+                    x1 = x,
+                    x2 = x + maxWidth - 1,
+                    y = y,
+                    callback = entry.callback
+                })
 
                 y = y + 1
             end
-
-            mon.setBackgroundColor(colors.black)
-            mon.setTextColor(colors.white)
         end
     end
 
-
     ----------------------------------------------------
-    -- 6. DIALOG WINDOW (drawn above everything)
+    -- 9. DIALOG (always topmost)
+    ----------------------------------------------------
+    ----------------------------------------------------
+    -- 9. DIALOG (always topmost)
     ----------------------------------------------------
     if MonitorModule.activeDialog then
         local dlg = MonitorModule.activeDialog
-        local lines = dlg.lines
-        local bg = dlg.bgColor
-        local buttons = dlg.buttons or {}
+        MonitorModule.dialogHitboxes = {}
 
-        local mon = MonitorModule.monitor
+        local lines = dlg.lines
+        local buttons = dlg.buttons
+        local bg = dlg.bgColor or colors.blue
+
         local w, h = mon.getSize()
 
-        ----------------------------------------------------
-        -- Compute box size (same as before)
-        ----------------------------------------------------
+        ------------------------------------------------
+        -- Compute dialog box size
+        ------------------------------------------------
         local textWidth = 0
         for _, line in ipairs(lines) do
-            if #line > textWidth then
-                textWidth = #line
-            end
+            if #line > textWidth then textWidth = #line end
         end
 
-        local btnWidthTotal = 0
-        for i, btn in ipairs(buttons) do
-            btnWidthTotal = btnWidthTotal + (#btn.label + 4)
-            if i < #buttons then
-                btnWidthTotal = btnWidthTotal + 1
-            end
+        local buttonWidth = 0
+        for _, b in ipairs(buttons) do
+            if #b.label > buttonWidth then buttonWidth = #b.label end
         end
 
-        local contentWidth = math.max(textWidth, btnWidthTotal)
+        local boxWidth = math.max(textWidth, buttonWidth) + 4  -- padding
+        local boxHeight = #lines + ( (#buttons > 0) and 3 or 2 )
 
-        local padding = 2
-        local boxW = contentWidth + padding * 2
-        local boxH = #lines + padding * 2
-        if #buttons > 0 then
-            boxH = boxH + 2
-        end
+        local startX = math.floor((w - boxWidth) / 2) + 1
+        local startY = math.floor((h - boxHeight) / 2) + 1
+        local endX   = startX + boxWidth - 1
 
-        ----------------------------------------------------
-        -- Center the box
-        ----------------------------------------------------
-        local startX = math.floor((w - boxW) / 2) + 1
-        local startY = math.floor((h - boxH) / 2) + 1
-
-        MonitorModule.dialogHitboxes = {}
-        MonitorModule.dialogHitbox = {
-            x1 = startX, y1 = startY,
-            x2 = startX + boxW - 1,
-            y2 = startY + boxH - 1
-        }
-
-        ----------------------------------------------------
-        -- DRAW SHADOW FIRST  (offset 1,1)
-        ----------------------------------------------------
+        ------------------------------------------------
+        -- Draw shadow
+        ------------------------------------------------
         mon.setBackgroundColor(colors.gray)
-        mon.setTextColor(colors.gray)
-
-        local shadowX = startX + 1
-        local shadowY = startY + 1
-
-        for y = 0, boxH - 1 do
-            mon.setCursorPos(shadowX, shadowY + y)
-            mon.write(string.rep(" ", boxW))
+        for y = startY + 1, startY + boxHeight do
+            mon.setCursorPos(startX + 1, y)
+            mon.write(string.rep(" ", boxWidth))
         end
 
-        ----------------------------------------------------
-        -- DRAW BACKGROUND BOX (same as before)
-        ----------------------------------------------------
+        ------------------------------------------------
+        -- Draw box background
+        ------------------------------------------------
         mon.setBackgroundColor(bg)
-        mon.setTextColor(colors.white)
-
-        for y = 0, boxH - 1 do
-            mon.setCursorPos(startX, startY + y)
-            mon.write(string.rep(" ", boxW))
+        for y = startY, startY + boxHeight - 1 do
+            mon.setCursorPos(startX, y)
+            mon.write(string.rep(" ", boxWidth))
         end
 
-        ----------------------------------------------------
-        -- Draw centered text
-        ----------------------------------------------------
-        local y = startY + padding
+        ------------------------------------------------
+        -- Draw dialog text
+        ------------------------------------------------
+        mon.setTextColor(colors.white)
+        local y = startY + 1
         for _, line in ipairs(lines) do
-            local x = startX + math.floor((boxW - #line) / 2)
-            mon.setCursorPos(x, y)
+            mon.setCursorPos(startX + 2, y)
             mon.write(line)
             y = y + 1
         end
 
-        ----------------------------------------------------
+        ------------------------------------------------
         -- Draw buttons
-        ----------------------------------------------------
+        ------------------------------------------------
         if #buttons > 0 then
-            local buttonY = startY + boxH - padding - 1
-            local btnX = startX + math.floor((boxW - btnWidthTotal) / 2)
+            y = startY + boxHeight - 2
+            local btnX = startX + 2
 
-            for _, btn in ipairs(buttons) do
-                local label = btn.label
-                local width = #label + 4
-
-                mon.setCursorPos(btnX, buttonY)
-                mon.setBackgroundColor(colors.lightGray)
+            for _, b in ipairs(buttons) do
+                local label = "[" .. b.label .. "]"
+                mon.setCursorPos(btnX, y)
+                mon.setBackgroundColor(colors.white)
                 mon.setTextColor(colors.black)
-                mon.write("[ " .. label .. " ]")
+                mon.write(label)
 
                 table.insert(MonitorModule.dialogHitboxes, {
                     x1 = btnX,
-                    x2 = btnX + width - 1,
-                    y = buttonY,
-                    callback = btn.callback
+                    x2 = btnX + #label - 1,
+                    y = y,
+                    callback = b.callback
                 })
 
-                btnX = btnX + width + 1
+                btnX = btnX + #label + 1
             end
         end
 
-        ----------------------------------------------------
-        -- Reset
-        ----------------------------------------------------
         mon.setBackgroundColor(colors.black)
         mon.setTextColor(colors.white)
     end
 
-
-    -- Reset
-    mon.setBackgroundColor(colors.black)
-    mon.setTextColor(colors.white)
 end
+
 
 --- Clear
 function MonitorModule.clear()
@@ -607,40 +784,100 @@ function MonitorModule.closeDialog()
     MonitorModule.render()
 end
 
+----------------------------------------------------------
+-- SCROLL
+----------------------------------------------------------
+function MonitorModule.scrollLeft()
+    local current = MonitorModule.currentTab
+    if not current then
+        return
+    end
+
+    local tab = MonitorModule.tabs[current]
+    if not tab then
+        return
+    end
+
+    if tab.hscroll > 0 then
+        tab.hscroll = tab.hscroll - 1
+        MonitorModule.render()
+    end
+end
+
+function MonitorModule.scrollRight()
+    local current = MonitorModule.currentTab
+    if not current then
+        return
+    end
+
+    local tab = MonitorModule.tabs[current]
+    local maxScroll = math.max(0, tab.width - MonitorModule.innerWidth)
+
+    if tab.hscroll < maxScroll then
+        tab.hscroll = tab.hscroll + 1
+        MonitorModule.render()
+    end
+end
+
+function MonitorModule.scrollUp()
+    local current = MonitorModule.currentTab
+    if not current then
+        return
+    end
+
+    local tab = MonitorModule.tabs[current]
+    if tab.vscroll > 0 then
+        tab.vscroll = tab.vscroll - 1
+        MonitorModule.render()
+    end
+end
+
+function MonitorModule.scrollDown()
+    local current = MonitorModule.currentTab
+    if not current then
+        return
+    end
+
+    local tab = MonitorModule.tabs[current]
+    local visibleLines = MonitorModule.innerHeight
+    local maxScroll = math.max(0, #tab.lines - visibleLines)
+
+    if tab.vscroll < maxScroll then
+        tab.vscroll = tab.vscroll + 1
+        MonitorModule.render()
+    end
+end
+
 
 ----------------------------------------------------------
 -- INTERACTIONS
 ----------------------------------------------------------
 function MonitorModule.handleTouch(x, y)
-
-    ------------------------------------------------
+    ------------------------------------------------------------------
     -- 1. DIALOG CLICKS
-    ------------------------------------------------
+    ------------------------------------------------------------------
     if MonitorModule.activeDialog then
         for _, box in ipairs(MonitorModule.dialogHitboxes) do
             if y == box.y and x >= box.x1 and x <= box.x2 then
                 local callback = box.callback
                 MonitorModule.closeDialog()
-                if callback then
-                    callback()
-                end
+                if callback then callback() end
                 return
             end
         end
 
-        -- Otherwise click closes dialog
+        -- Click anywhere else closes dialog
         MonitorModule.closeDialog()
         return
     end
 
-    ------------------------------------------------
+    ------------------------------------------------------------------
     -- 2. MENU BAR CLICKS (always active)
-    ------------------------------------------------
+    ------------------------------------------------------------------
     if y == 2 then
         for name, box in pairs(MonitorModule.menuHitboxes) do
             if x >= box.x1 and x <= box.x2 then
-
-                -- Toggle dropdown
+                -- Toggle dropdown for this menu
                 if MonitorModule.openDropdown == name then
                     MonitorModule.openDropdown = nil
                 else
@@ -657,7 +894,6 @@ function MonitorModule.handleTouch(x, y)
     -- 3. DROPDOWN OPEN → ONLY dropdown can be clicked
     ------------------------------------------------
     if MonitorModule.openDropdown then
-
         -- Click on a dropdown entry
         for _, box in ipairs(MonitorModule.dropdownHitboxes) do
             if y == box.y and x >= box.x1 and x <= box.x2 then
@@ -667,7 +903,6 @@ function MonitorModule.handleTouch(x, y)
                 return
             end
         end
-
         -- Click outside closes dropdown
         MonitorModule.openDropdown = nil
         MonitorModule.render()
@@ -675,11 +910,129 @@ function MonitorModule.handleTouch(x, y)
     end
 
 
-    ------------------------------------------------
-    -- 4. TABS (only active when no dropdown open)
-    ------------------------------------------------
+    ------------------------------------------------------------------
+    -- 4. SCROLL BUTTONS (horizontal / vertical)
+    ------------------------------------------------------------------
+
+    -- Horizontal left button
+    if MonitorModule.scrollLeftHitbox
+            and y == MonitorModule.scrollLeftHitbox.y
+            and x >= MonitorModule.scrollLeftHitbox.x1
+            and x <= MonitorModule.scrollLeftHitbox.x2 then
+        MonitorModule.scrollLeft()
+        return
+    end
+
+    -- Horizontal right button
+    if MonitorModule.scrollRightHitbox
+            and y == MonitorModule.scrollRightHitbox.y
+            and x >= MonitorModule.scrollRightHitbox.x1
+            and x <= MonitorModule.scrollRightHitbox.x2 then
+        MonitorModule.scrollRight()
+        return
+    end
+
+    -- Vertical up button
+    if MonitorModule.scrollUpHitbox
+            and y == MonitorModule.scrollUpHitbox.y
+            and x >= MonitorModule.scrollUpHitbox.x1
+            and x <= MonitorModule.scrollUpHitbox.x2 then
+        MonitorModule.scrollUp()
+        return
+    end
+
+    -- Vertical down button
+    if MonitorModule.scrollDownHitbox
+            and y == MonitorModule.scrollDownHitbox.y
+            and x >= MonitorModule.scrollDownHitbox.x1
+            and x <= MonitorModule.scrollDownHitbox.x2 then
+        MonitorModule.scrollDown()
+        return
+    end
+
+    ------------------------------------------------------------------
+    -- 5. SCROLLBAR TRACK CLICKS (page scroll behaviour)
+    ------------------------------------------------------------------
+    local tab = MonitorModule.tabs[MonitorModule.currentTab]
+    if tab then
+        local mon = MonitorModule.monitor
+        local w, h = mon.getSize()
+
+        --------------------------------------------------------------
+        -- Horizontal scrollbar track
+        --------------------------------------------------------------
+        local leftLabel  = " < "
+        local rightLabel = " > "
+        local bottomY = h
+        local leftEnd = 2 + #leftLabel              -- after "<"
+        local rightStart = w - (#rightLabel + 1)    -- before ">"
+
+        local maxHScroll = math.max(0, tab.width - MonitorModule.innerWidth)
+        if maxHScroll > 0 then
+            local barX1 = leftEnd
+            local barX2 = rightStart - 1
+            local barWidth = barX2 - barX1 + 1
+
+            local thumbWidth = 7                     -- fixed thumb size
+            local movable = barWidth - thumbWidth
+            if movable < 0 then movable = 0 end
+
+            local thumbPos = math.floor((tab.hscroll / maxHScroll) * movable)
+            local thumbStart = barX1 + thumbPos
+            local thumbEnd = thumbStart + thumbWidth - 1
+
+            -- Click left of thumb
+            if y == bottomY and x >= barX1 and x < thumbStart then
+                MonitorModule.scrollLeft()
+                return
+            end
+
+            -- Click right of thumb
+            if y == bottomY and x > thumbEnd and x <= barX2 then
+                MonitorModule.scrollRight()
+                return
+            end
+        end
+
+        --------------------------------------------------------------
+        -- Vertical scrollbar track
+        --------------------------------------------------------------
+        local innerY1 = 5               -- must match render() (contentTop + 1)
+        local innerY2 = h - 1
+        local barY1 = innerY1 + 1       -- below ^
+        local barY2 = innerY2 - 1       -- above v
+
+        local totalLines = #tab.lines
+        local visibleLines = MonitorModule.innerHeight
+        local maxVScroll = math.max(0, totalLines - visibleLines)
+
+        if maxVScroll > 0 then
+            local thumbHeight = 7       -- fixed thumb size
+            local movable = (barY2 - barY1 + 1) - thumbHeight
+            if movable < 0 then movable = 0 end
+
+            local thumbOffset = math.floor((tab.vscroll / maxVScroll) * movable)
+            local thumbTop = barY1 + thumbOffset
+            local thumbBottom = thumbTop + thumbHeight - 1
+
+            -- Click above thumb
+            if x == 1 and y >= barY1 and y < thumbTop then
+                MonitorModule.scrollUp()
+                return
+            end
+
+            -- Click below thumb
+            if x == 1 and y > thumbBottom and y <= barY2 then
+                MonitorModule.scrollDown()
+                return
+            end
+        end
+    end
+
+    ------------------------------------------------------------------
+    -- 6. TAB CLICKS
+    ------------------------------------------------------------------
     if y == 3 then
-        -- ← tabs are ALWAYS on line 3 now
         for name, box in pairs(MonitorModule.tabHitboxes) do
             if x >= box.x1 and x <= box.x2 then
                 MonitorModule.switchTab(name)
@@ -687,8 +1040,8 @@ function MonitorModule.handleTouch(x, y)
             end
         end
     end
-
 end
+
 
 ----------------------------------------------------------
 return MonitorModule
