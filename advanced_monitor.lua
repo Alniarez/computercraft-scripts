@@ -6,7 +6,6 @@ local MonitorModule = {}
 MonitorModule.peripherals = nil
 MonitorModule.monitor = nil
 
-
 -- menus
 MonitorModule.menuItems = {}        -- { name = { dropdown = { {label, callback}, ... } } }
 MonitorModule.menuOrder = {}   -- maintains menu order
@@ -30,12 +29,26 @@ MonitorModule.dialogHitboxes = {}      -- For buttons
 
 function MonitorModule.initialize(peripherals_input)
     MonitorModule.peripherals = peripherals_input
+    -- RESET ALL OTHER VARIABLES
+    MonitorModule.monitor = nil
+    -- menus
+    MonitorModule.menuItems = {}
+    MonitorModule.menuOrder = {}
+    MonitorModule.menuHitboxes = {}
+    MonitorModule.dropdownHitboxes = {}
+    MonitorModule.openDropdown = nil
+    -- tabs
+    MonitorModule.tabs = {}
+    MonitorModule.tabOrder = {}
+    MonitorModule.currentTab = nil
+    -- dialog
+    MonitorModule.activeDialog = nil
+    MonitorModule.dialogHitboxes = {}
 end
 
 function MonitorModule.ensureDefaultTab()
     if #MonitorModule.tabOrder == 0 then
         MonitorModule.addTab("Home", colors.black)
-        term.write("Added default Home tab")
     end
 end
 
@@ -135,6 +148,24 @@ function MonitorModule.switchTab(name)
     MonitorModule.render()
 end
 
+--- Clears a tab's content
+function MonitorModule.clearTab(tabName)
+    if not MonitorModule.tabs[tabName] then
+        error("Tab does not exist: " .. tabName)
+    end
+
+    local tab = MonitorModule.tabs[tabName]
+
+    -- Clear the content of the tab
+    tab.lines = {}
+    tab.width = 0
+
+    -- Only re-render active tab
+    if tabName == MonitorModule.currentTab then
+        MonitorModule.render()
+    end
+end
+
 --- Add a line to a specific tab
 function MonitorModule.printToTab(tabName, text)
     if not MonitorModule.tabs[tabName] then
@@ -182,7 +213,6 @@ function MonitorModule.render()
     mon.setBackgroundColor(colors.black)
     mon.setTextColor(colors.white)
     mon.write(string.rep(" ", w))
-
 
     local xpos = 1
     for _, name in ipairs(MonitorModule.menuOrder) do
@@ -318,7 +348,9 @@ function MonitorModule.render()
         local endLine = #tab.lines
 
         for i = startLine, endLine do
-            if y > innerY2 then break end
+            if y > innerY2 then
+                break
+            end
             local line = tab.lines[i]
 
             if line then
@@ -344,7 +376,7 @@ function MonitorModule.render()
     local bottomY = h
     local scrollColor = (tab and tab.color) or colors.white
 
-    local leftLabel  = " < "
+    local leftLabel = " < "
     local rightLabel = " > "
 
     -- left button
@@ -392,7 +424,9 @@ function MonitorModule.render()
 
         -- Movable range
         local movable = barWidth - thumbWidth
-        if movable < 0 then movable = 0 end
+        if movable < 0 then
+            movable = 0
+        end
 
         -- Thumb position based on hscroll
         local thumbPos = 0
@@ -500,7 +534,9 @@ function MonitorModule.render()
 
         -- Range thumb can move
         local movable = barHeight - thumbHeight
-        if movable < 0 then movable = 0 end
+        if movable < 0 then
+            movable = 0
+        end
 
         -- Thumb position proportional to vscroll
         local thumbOffset = 0
@@ -618,20 +654,24 @@ function MonitorModule.render()
         ------------------------------------------------
         local textWidth = 0
         for _, line in ipairs(lines) do
-            if #line > textWidth then textWidth = #line end
+            if #line > textWidth then
+                textWidth = #line
+            end
         end
 
         local buttonWidth = 0
         for _, b in ipairs(buttons) do
-            if #b.label > buttonWidth then buttonWidth = #b.label end
+            if #b.label > buttonWidth then
+                buttonWidth = #b.label
+            end
         end
 
         local boxWidth = math.max(textWidth, buttonWidth) + 4  -- padding
-        local boxHeight = #lines + ( (#buttons > 0) and 3 or 2 )
+        local boxHeight = #lines + ((#buttons > 0) and 3 or 2)
 
         local startX = math.floor((w - boxWidth) / 2) + 1
         local startY = math.floor((h - boxHeight) / 2) + 1
-        local endX   = startX + boxWidth - 1
+        local endX = startX + boxWidth - 1
 
         ------------------------------------------------
         -- Draw shadow
@@ -692,7 +732,6 @@ function MonitorModule.render()
     end
 
 end
-
 
 --- Clear
 function MonitorModule.clear()
@@ -861,7 +900,9 @@ function MonitorModule.handleTouch(x, y)
             if y == box.y and x >= box.x1 and x <= box.x2 then
                 local callback = box.callback
                 MonitorModule.closeDialog()
-                if callback then callback() end
+                if callback then
+                    callback()
+                end
                 return
             end
         end
@@ -961,7 +1002,7 @@ function MonitorModule.handleTouch(x, y)
         --------------------------------------------------------------
         -- Horizontal scrollbar track
         --------------------------------------------------------------
-        local leftLabel  = " < "
+        local leftLabel = " < "
         local rightLabel = " > "
         local bottomY = h
         local leftEnd = 2 + #leftLabel              -- after "<"
@@ -975,7 +1016,9 @@ function MonitorModule.handleTouch(x, y)
 
             local thumbWidth = 7                     -- fixed thumb size
             local movable = barWidth - thumbWidth
-            if movable < 0 then movable = 0 end
+            if movable < 0 then
+                movable = 0
+            end
 
             local thumbPos = math.floor((tab.hscroll / maxHScroll) * movable)
             local thumbStart = barX1 + thumbPos
@@ -1009,7 +1052,9 @@ function MonitorModule.handleTouch(x, y)
         if maxVScroll > 0 then
             local thumbHeight = 7       -- fixed thumb size
             local movable = (barY2 - barY1 + 1) - thumbHeight
-            if movable < 0 then movable = 0 end
+            if movable < 0 then
+                movable = 0
+            end
 
             local thumbOffset = math.floor((tab.vscroll / maxVScroll) * movable)
             local thumbTop = barY1 + thumbOffset
@@ -1041,7 +1086,6 @@ function MonitorModule.handleTouch(x, y)
         end
     end
 end
-
 
 ----------------------------------------------------------
 return MonitorModule
