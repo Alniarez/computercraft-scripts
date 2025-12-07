@@ -74,7 +74,11 @@ monitor.addMenu("Program", {
                 colors.blue,
                 {
                     { label = "Yes", callback = function()
-                        shutdown()
+                        monitor.showDialog({ "Goodbye!" })
+                        sleep(2)
+                        monitor.clear()
+                        monitor.drawSplash({ "It's now safe to turn off", "     your computer" }, colors.black, colors.orange)
+                        RUNNING = false
                     end },
                     { label = "No", callback = function()
                         monitor.closeDialog()
@@ -103,15 +107,6 @@ monitor.addMenu("Help", {
     end },
 })
 
----Shutdown
-local function shutdown()
-    monitor.showDialog({ "Goodbye!" })
-    sleep(2)
-    monitor.clear()
-    monitor.drawSplash({ "It's now safe to turn off", "     your computer" }, colors.black, colors.orange)
-    RUNNING = false
-end
-
 local function dumpToString(t, indent, visited, out)
     indent = indent or 0
     visited = visited or {}
@@ -138,26 +133,108 @@ local function dumpToString(t, indent, visited, out)
     return table.concat(out, "\n")
 end
 
+local function formatCitizen(citizen)
+    local stateColor = colors.white
+
+    if citizen.state == "Sick" then
+        stateColor = colors.red
+    end
+
+    local job = "None"
+    if citizen.work and citizen.work.type then
+        job = citizen.work.type
+    end
+
+    local table = {
+        { text = citizen.name, color = colors.orange },
+        { text = " | ", color = colors.lightGray },
+        { text = job },
+        { text = " | ", color = colors.lightGray },
+        { text = citizen.state or "Unknown", color = stateColor }
+    }
+
+    return table
+
+end
 
 local function formatSkills(skills, perLine)
-    local parts = {}
-
-    -- Convert into compact "Ath:10" etc.
     local items = {}
-    for k, v in pairs(skills) do
-        table.insert(items, string.sub(k, 1, 3) .. ":" .. tostring(v.level))
+
+    -- Build sortable items
+    for name, data in pairs(skills) do
+        table.insert(items, {
+            abbr  = string.sub(name, 1, 3),
+            level = tonumber(data.level) or 0
+        })
     end
 
-    table.sort(items) -- optional but keeps output consistent
+    table.sort(items, function(a, b)
+        return a.abbr < b.abbr
+    end)
 
-    -- Chunk into lines
-    local lines = {}
-    for i = 1, #items, perLine do
-        table.insert(lines, table.concat(items, ", ", i, math.min(i + perLine - 1, #items)))
+    ------------------------------------------------------
+    -- Color selector (applies ONLY to level number)
+    ------------------------------------------------------
+    local function levelColor(lv)
+        if lv <= 20 then
+            return colors.white
+        elseif lv <= 40 then
+            return colors.orange
+        elseif lv <= 60 then
+            return colors.red
+        else
+            return colors.blue
+        end
     end
 
-    return lines
+    ------------------------------------------------------
+    -- Build segmented lines
+    ------------------------------------------------------
+    local result = {}
+    local i = 1
+
+    while i <= #items do
+        local lineParts = {}
+
+        -- Add 4-space indentation
+        table.insert(lineParts, {
+            text = "    ",
+            color = colors.white
+        })
+
+        local last = math.min(i + perLine - 1, #items)
+
+        for idx = i, last do
+            local entry = items[idx]
+
+            -- "Ath:"
+            table.insert(lineParts, {
+                text = entry.abbr .. ":",
+                color = colors.white
+            })
+
+            -- Level number with color
+            table.insert(lineParts, {
+                text = tostring(entry.level),
+                color = levelColor(entry.level)
+            })
+
+            -- Separator ", "
+            if idx < last then
+                table.insert(lineParts, {
+                    text = ", ",
+                    color = colors.white
+                })
+            end
+        end
+
+        table.insert(result, lineParts)
+        i = last + 1
+    end
+
+    return result
 end
+
 
 ---handle touch
 local function handleTouches()
@@ -184,26 +261,8 @@ local function colonyLogic()
 
             for _, citizen in ipairs(citizens) do
 
-                local job = "None"
-                if citizen.work and citizen.work.type then
-                    job = citizen.work.type
-                end
-
-                local line = string.format(
-                        "%s | Job: %s | State: %s",
-                        citizen.name,
-                        job,
-                        citizen.state or "Unknown"
-                )
-
-                monitor.printToTab(COLONY, line)
-
-                if config.showCitizenSkill then
-                    local skillLines = formatSkills(citizen.skills, config.skillsPerLine)
-                    for _, line in ipairs(skillLines) do
-                        monitor.printToTab(COLONY, "    "..line)
-                    end
-                end
+                monitor.printToTab(COLONY, formatCitizen(citizen))
+                monitor.printToTab(COLONY, formatSkills(citizen.skills, config.skillsPerLine))
             end
 
         end
@@ -216,13 +275,9 @@ local function colonyLogic()
             local visitors = colonyIntegrator.getVisitors()
 
             for _, visitor in ipairs(visitors) do
-                monitor.printToTab(VISITORS, visitor.name)
+                monitor.printToTab(VISITORS, { text = visitor.name, color = colors.orange })
 
-                local skillLines = formatSkills(visitor.skills, config.skillsPerLine) -- 5 skills per line
-
-                for _, line in ipairs(skillLines) do
-                    monitor.printToTab(VISITORS, "    "..line)
-                end
+                monitor.printToTab(VISITORS, formatSkills(visitor.skills, config.skillsPerLine))
 
             end
         end
@@ -321,5 +376,3 @@ local function colonyLogic()
 end
 
 parallel.waitForAny(handleTouches, colonyLogic)
-shutdown()
-

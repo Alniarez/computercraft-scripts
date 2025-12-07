@@ -14,7 +14,8 @@ MonitorModule.dropdownHitboxes = {} -- dropdown clickable zones
 MonitorModule.openDropdown = nil    -- name of currently open dropdown
 
 -- tabs
-MonitorModule.tabs = {}          -- { name = { lines = {}, color = ... } } TODO: formating for content? color, bg, etc
+MonitorModule.tabs = {}          -- { name = { lines = line, color = ... } }
+                                 -- TODO: line type should be a list of parts, each part being = { text = string, color = string}
 MonitorModule.tabOrder = {}      -- ordered list of tab names
 MonitorModule.currentTab = nil   -- currently active tab
 
@@ -167,25 +168,127 @@ function MonitorModule.clearTab(tabName)
 end
 
 --- Add a line to a specific tab
-function MonitorModule.printToTab(tabName, text)
-    if not MonitorModule.tabs[tabName] then
-        error("Tab does not exist: " .. tabName)
-    end
-
+--- Add a line to a specific tab
+function MonitorModule.printToTab(tabName, value)
     local tab = MonitorModule.tabs[tabName]
-    text = tostring(text)
-    table.insert(tab.lines, text)
-
-    -- Track widest line
-    if #text > tab.width then
-        tab.width = #text
+    if not tab then
+        error("Tab does not exist: " .. tostring(tabName))
     end
 
-    -- Only re-render active tab
+    -------------------------------------------------
+    -- Helpers
+    -------------------------------------------------
+
+    -- A segment must have t.text (string)
+    local function isSegment(t)
+        return type(t) == "table" and type(t.text) == "string"
+    end
+
+    -- A line is an array of segments
+    local function isLineParts(t)
+        return type(t) == "table"
+                and type(t[1]) == "table"
+                and isSegment(t[1])
+    end
+
+    local function normalizeSegment(seg)
+        return {
+            text  = seg.text or "",
+            color = seg.color or colors.white
+        }
+    end
+
+    local function normalizeLine(line)
+        local result = {}
+        for _, seg in ipairs(line) do
+            if isSegment(seg) then
+                table.insert(result, normalizeSegment(seg))
+            elseif type(seg) == "string" then
+                table.insert(result, { text = seg, color = colors.white })
+            end
+        end
+        return result
+    end
+
+    -------------------------------------------------
+    -- Normalize value into:  { line1, line2, ... }
+    -------------------------------------------------
+
+    local lines = {}
+
+    --
+    -- CASE 1 — string → becomes one line
+    --
+    if type(value) == "string" then
+        table.insert(lines, { { text = value, color = colors.white } })
+
+        --
+        -- CASE 2 — a single segment → wrap in line
+        --
+    elseif isSegment(value) then
+        table.insert(lines, { normalizeSegment(value) })
+
+        --
+        -- CASE 3 — a full line (array of segments)
+        --
+    elseif isLineParts(value) then
+        table.insert(lines, normalizeLine(value))
+
+        --
+        -- CASE 4 — table: either list of lines OR list of strings OR list of segments
+        --
+    elseif type(value) == "table" then
+        local first = value[1]
+
+        -- List of plain strings → each becomes its own line
+        if type(first) == "string" then
+            for _, s in ipairs(value) do
+                table.insert(lines, { { text = s, color = colors.white } })
+            end
+
+            -- List of lines: {{seg,seg},{seg,seg},...}
+        elseif isLineParts(first) then
+            for _, line in ipairs(value) do
+                table.insert(lines, normalizeLine(line))
+            end
+
+            -- List of segments: {seg1, seg2, seg3} → one line
+        elseif isSegment(first) then
+            table.insert(lines, normalizeLine(value))
+
+        else
+            MonitorModule.showDialog("Unsupported input to printToTab (table shape not recognized)", colors.red)
+            error("Unsupported input to printToTab (table shape not recognized)")
+        end
+
+    else
+        MonitorModule.showDialog("Unsupported input to printToTab: " .. tostring(value), colors.red)
+        error("Unsupported input to printToTab: " .. tostring(value))
+    end
+
+    -------------------------------------------------
+    -- Insert normalized lines + update width
+    -------------------------------------------------
+
+    for _, lineParts in ipairs(lines) do
+        table.insert(tab.lines, lineParts)
+
+        local width = 0
+        for _, seg in ipairs(lineParts) do
+            width = width + #seg.text
+        end
+
+        if width > tab.width then
+            tab.width = width
+        end
+    end
+
     if tabName == MonitorModule.currentTab then
         MonitorModule.render()
     end
 end
+
+
 
 --- Add line to current tab
 function MonitorModule.print(text)
@@ -340,7 +443,7 @@ function MonitorModule.render()
     end
 
     ----------------------------------------------------
-    -- 5. DRAW TAB CONTENT (with both scrolls)
+    -- 5. DRAW TAB CONTENT (with both scrolls, multi-segment lines)
     ----------------------------------------------------
     if tab then
         local y = innerY1
@@ -351,22 +454,64 @@ function MonitorModule.render()
             if y > innerY2 then
                 break
             end
+
             local line = tab.lines[i]
 
-            if line then
-                local shifted = line:sub(tab.hscroll + 1)
-                if #shifted > innerWidth then
-                    shifted = shifted:sub(1, innerWidth)
-                end
+            ------------------------------------------------------------------
+            -- Normalize: string → { {text=..., color=white} }
+            ------------------------------------------------------------------
+            local parts
+            if type(line) == "string" then
+                parts = { { text = line, color = colors.white } }
+            else
+                parts = line
+            end
 
-                mon.setCursorPos(innerX1, y)
-                mon.write(shifted)
+            ------------------------------------------------------------------
+            -- Horizontal scrolling logic
+            ------------------------------------------------------------------
+            local hskip = tab.hscroll
+            local x = innerX1
+
+            for _, seg in ipairs(parts) do
+                local segText = seg.text or ""
+                local segColor = seg.color or colors.white
+                local segLen = #segText
+
+                -- Skip characters removed by left scroll
+                if hskip >= segLen then
+                    hskip = hskip - segLen
+                else
+                    -- Take the visible part of this segment after horizontal skip
+                    local visibleText = segText:sub(hskip + 1)
+                    hskip = 0
+
+                    -- Trim right side if needed for innerWidth
+                    if x + #visibleText - 1 > innerX2 then
+                        visibleText = visibleText:sub(1, innerX2 - x + 1)
+                    end
+
+                    if #visibleText > 0 then
+                        mon.setCursorPos(x, y)
+                        mon.setTextColor(segColor)
+                        mon.write(visibleText)
+                        x = x + #visibleText
+                    end
+
+                    -- Stop if we've filled the inner width
+                    if x > innerX2 then
+                        break
+                    end
+                end
             end
 
             y = y + 1
         end
     end
 
+    -- reset drawing colors and store inner sizes for scrollbars
+    mon.setTextColor(colors.white)
+    mon.setBackgroundColor(colors.black)
     MonitorModule.innerWidth = innerWidth
     MonitorModule.innerHeight = innerY2 - innerY1 + 1
 
@@ -411,9 +556,12 @@ function MonitorModule.render()
     ----------------------------------------------------
     -- 6b. HORIZONTAL SCROLLBAR (fixed 7-cell thumb)
     ----------------------------------------------------
-    local maxHScroll = math.max(0, tab.width - MonitorModule.innerWidth)
+    local maxHScroll = 0
+    if tab then
+        maxHScroll = math.max(0, tab.width - MonitorModule.innerWidth)
+    end
 
-    if maxHScroll > 0 then
+    if tab and maxHScroll > 0 then
         local barY = h                       -- bottom border line
         local barX1 = 2 + #leftLabel         -- after "<"
         local barX2 = rightX - 1             -- before ">"
@@ -515,12 +663,12 @@ function MonitorModule.render()
     ----------------------------------------------------
     -- 7b. VERTICAL SCROLLBAR (fixed 7-cell thumb)
     ----------------------------------------------------
-    local totalLines = #tab.lines
+    local totalLines = tab and #tab.lines or 0
     local visibleLines = MonitorModule.innerHeight
     local maxVScroll = math.max(0, totalLines - visibleLines)
 
     -- Only draw a scrollbar if there is something to scroll
-    if maxVScroll > 0 then
+    if tab and maxVScroll > 0 then
         local barX = 1
         local barY1 = innerY1 + 1          -- below ^
         local barY2 = innerY2 - 1          -- above v
@@ -636,9 +784,6 @@ function MonitorModule.render()
     ----------------------------------------------------
     -- 9. DIALOG (always topmost)
     ----------------------------------------------------
-    ----------------------------------------------------
-    -- 9. DIALOG (always topmost)
-    ----------------------------------------------------
     if MonitorModule.activeDialog then
         local dlg = MonitorModule.activeDialog
         MonitorModule.dialogHitboxes = {}
@@ -730,8 +875,8 @@ function MonitorModule.render()
         mon.setBackgroundColor(colors.black)
         mon.setTextColor(colors.white)
     end
-
 end
+
 
 --- Clear
 function MonitorModule.clear()
@@ -1087,6 +1232,34 @@ function MonitorModule.handleTouch(x, y)
     end
 end
 
+local function dumpToString(t, indent, visited, out)
+    indent = indent or 0
+    visited = visited or {}
+    out = out or {}
+
+    if visited[t] then
+        table.insert(out, string.rep(" ", indent) .. "*RECURSION*")
+        return table.concat(out, "\n")
+    end
+    visited[t] = true
+
+    for k, v in pairs(t) do
+        local prefix = string.rep(" ", indent) .. tostring(k) .. ": "
+
+        if type(v) == "table" then
+            table.insert(out, prefix .. "{")
+            dumpToString(v, indent + 2, visited, out)
+            table.insert(out, string.rep(" ", indent) .. "}")
+        else
+            table.insert(out, prefix .. tostring(v))
+        end
+    end
+
+    return table.concat(out, "\n")
+end
+
 ----------------------------------------------------------
 return MonitorModule
 ----------------------------------------------------------
+
+
