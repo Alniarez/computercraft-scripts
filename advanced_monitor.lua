@@ -167,119 +167,102 @@ function MonitorModule.clearTab(tabName)
     end
 end
 
---- Add a line to a specific tab
---- Add a line to a specific tab
 function MonitorModule.printToTab(tabName, value)
     local tab = MonitorModule.tabs[tabName]
     if not tab then
         error("Tab does not exist: " .. tostring(tabName))
     end
 
-    -------------------------------------------------
+    -------------------------------------------------------------------------
     -- Helpers
-    -------------------------------------------------
-
-    -- A segment must have t.text (string)
-    local function isSegment(t)
-        return type(t) == "table" and type(t.text) == "string"
-    end
-
-    -- A line is an array of segments
-    local function isLineParts(t)
-        return type(t) == "table"
-                and type(t[1]) == "table"
-                and isSegment(t[1])
-    end
-
-    local function normalizeSegment(seg)
-        return {
-            text  = seg.text or "",
-            color = seg.color or colors.white
-        }
-    end
-
-    local function normalizeLine(line)
-        local result = {}
-        for _, seg in ipairs(line) do
-            if isSegment(seg) then
-                table.insert(result, normalizeSegment(seg))
-            elseif type(seg) == "string" then
-                table.insert(result, { text = seg, color = colors.white })
-            end
+    -------------------------------------------------------------------------
+    local function toSegment(v)
+        if type(v) == "table" and type(v.text) == "string" then
+            return { text = v.text, color = v.color or colors.white }
+        elseif type(v) == "string" then
+            return { text = v, color = colors.white }
+        else
+            error("Invalid segment: " .. tostring(v))
         end
-        return result
     end
 
-    -------------------------------------------------
-    -- Normalize value into:  { line1, line2, ... }
-    -------------------------------------------------
+    local function toLine(v)
+        -- string → one segment line
+        if type(v) == "string" then
+            return { toSegment(v) }
+        end
 
+        -- single segment table → one segment line
+        if type(v) == "table" and type(v.text) == "string" then
+            return { toSegment(v) }
+        end
+
+        -- table of segments / strings → multi-segment line
+        if type(v) == "table" then
+            local line = {}
+            for _, seg in ipairs(v) do
+                table.insert(line, toSegment(seg))
+            end
+            return line
+        end
+
+        error("Invalid line: " .. tostring(v))
+    end
+
+    -------------------------------------------------------------------------
+    -- Normalize input into list of lines
+    -------------------------------------------------------------------------
     local lines = {}
 
-    --
-    -- CASE 1 — string → becomes one line
-    --
     if type(value) == "string" then
-        table.insert(lines, { { text = value, color = colors.white } })
+        table.insert(lines, toLine(value))
 
-        --
-        -- CASE 2 — a single segment → wrap in line
-        --
-    elseif isSegment(value) then
-        table.insert(lines, { normalizeSegment(value) })
-
-        --
-        -- CASE 3 — a full line (array of segments)
-        --
-    elseif isLineParts(value) then
-        table.insert(lines, normalizeLine(value))
-
-        --
-        -- CASE 4 — table: either list of lines OR list of strings OR list of segments
-        --
     elseif type(value) == "table" then
-        local first = value[1]
-
-        -- List of plain strings → each becomes its own line
-        if type(first) == "string" then
-            for _, s in ipairs(value) do
-                table.insert(lines, { { text = s, color = colors.white } })
-            end
-
-            -- List of lines: {{seg,seg},{seg,seg},...}
-        elseif isLineParts(first) then
-            for _, line in ipairs(value) do
-                table.insert(lines, normalizeLine(line))
-            end
-
-            -- List of segments: {seg1, seg2, seg3} → one line
-        elseif isSegment(first) then
-            table.insert(lines, normalizeLine(value))
-
+        -- single segment at top level
+        if type(value.text) == "string" then
+            table.insert(lines, toLine(value))
         else
-            MonitorModule.showDialog("Unsupported input to printToTab (table shape not recognized)", colors.red)
-            error("Unsupported input to printToTab (table shape not recognized)")
-        end
+            local first = value[1]
+            if first == nil then
+                return          -- empty table: nothing to print
+            end
 
+            -- list of plain strings → many one-segment lines
+            if type(first) == "string" then
+                for _, s in ipairs(value) do
+                    table.insert(lines, toLine(s))
+                end
+
+                -- list of lines: { {seg,...}, {seg,...}, ... }
+            elseif type(first) == "table"
+                    and type(first[1]) == "table"
+                    and type(first[1].text) == "string" then
+
+                for _, line in ipairs(value) do
+                    table.insert(lines, toLine(line))
+                end
+
+                -- otherwise: treat whole table as a single multi-segment line
+            else
+                table.insert(lines, toLine(value))
+            end
+        end
     else
-        MonitorModule.showDialog("Unsupported input to printToTab: " .. tostring(value), colors.red)
         error("Unsupported input to printToTab: " .. tostring(value))
     end
 
-    -------------------------------------------------
-    -- Insert normalized lines + update width
-    -------------------------------------------------
-
+    -------------------------------------------------------------------------
+    -- Append lines and update width
+    -------------------------------------------------------------------------
     for _, lineParts in ipairs(lines) do
         table.insert(tab.lines, lineParts)
 
-        local width = 0
+        local totalLen = 0
         for _, seg in ipairs(lineParts) do
-            width = width + #seg.text
+            totalLen = totalLen + #seg.text
         end
-
-        if width > tab.width then
-            tab.width = width
+        if totalLen > tab.width then
+            tab.width = totalLen
         end
     end
 
@@ -287,7 +270,6 @@ function MonitorModule.printToTab(tabName, value)
         MonitorModule.render()
     end
 end
-
 
 
 --- Add line to current tab
