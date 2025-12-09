@@ -10,12 +10,14 @@ To make it work make sure you have something like the follolwing setup:
 * Player detector
 * Advanced computer
 * Avanced monitor (Make large)
-Connected with wired routers.
+
+All connected with wired routers.
 
 ![example setup Screenshot](./img.png)
 
 
-
 # Todo:
-- Needs screen needs different views (Complete list, group by citizen, etc)
+- [ ] Needs screen cold use different views (Complete list, group by citizen, etc)
 - [ ] ~~I think the count of items needed is wrong~~ Item count fixed
+- [ ] Better settings
+- [ ] Refined Storage Option
