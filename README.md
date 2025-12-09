@@ -18,6 +18,6 @@ All connected with wired routers.
 
 # Todo:
 - [ ] Needs screen cold use different views (Complete list, group by citizen, etc)
-- [ ] ~~I think the count of items needed is wrong~~ Item count fixed
+- [X] ~~I think the count of items needed is wrong~~ Item count fixed
 - [ ] Better settings
 - [ ] Refined Storage Option
