@@ -9,7 +9,7 @@ local RUNNING = true
 local ME_DRIVE = false
 
 monitor.initialize(peripherals)
-peripherals.listPeripherals();
+--peripherals.listPeripherals();
 
 local playerDetector, playerDetectorError = peripherals.getPeripheralByType("player_detector")
 local colonyIntegrator, colonyIntegratorError = peripherals.getPeripheralByType("colony_integrator")
@@ -252,16 +252,19 @@ function ColonyHelper.formatSkills(skills, perLine, tabulation)
     ------------------------------------------------------
     -- Color selector (applies ONLY to level number)
     ------------------------------------------------------
-    local function levelColor(lv)
-        if lv <= 20 then
-            return colors.white
-        elseif lv <= 40 then
-            return colors.orange
-        elseif lv <= 60 then
-            return colors.red
-        else
-            return colors.blue
-        end
+    local function levelColor(lv, max)
+        max = max or 100
+        local pct = (lv / max) * 100
+
+        if pct <= 10 then return colors.white end
+        if pct <= 20 then return colors.lightGray end
+        if pct <= 30 then return colors.gray end
+        if pct <= 40 then return colors.yellow end
+        if pct <= 50 then return colors.orange end
+        if pct <= 60 then return colors.red end
+        if pct <= 70 then return colors.purple end
+        if pct <= 85 then return colors.blue end
+        return colors.lime
     end
 
     ------------------------------------------------------
@@ -376,11 +379,10 @@ function ColonyHelper.formatRecruitCost(costs, tabulation)
 end
 
 ------------------------------------------------------
--- Format NEEDS list
+-- Format NEEDS list (correct req.count logic)
 ------------------------------------------------------
 function ColonyHelper.formatNeeds(requests)
     local out = {}
-
     requests = requests or {}
     local needs = {}
 
@@ -389,28 +391,28 @@ function ColonyHelper.formatNeeds(requests)
     ------------------------------------------------------
     for _, req in ipairs(requests) do
         local building = req.target or "Unknown"
+        local needed   = req.count or 1
 
-        if req.items then
+        -- Every request has an items[] table with descriptors
+        local it = req.items and req.items[1]
+        if it then
+            local reg  = it.name or "unknown"
+            local name = it.displayName or reg
+
             needs[building] = needs[building] or {}
 
-            for _, it in ipairs(req.items) do
-                local reg = it.name or "unknown"
-                local name = it.displayName or reg
-                local count = it.count or 1
-
-                local entry = needs[building][reg]
-                if not entry then
-                    entry = {
-                        building = building,
-                        reg = reg,
-                        item = name,
-                        count = 0
-                    }
-                    needs[building][reg] = entry
-                end
-
-                entry.count = entry.count + count
+            local entry = needs[building][reg]
+            if not entry then
+                entry = {
+                    building = building,
+                    reg      = reg,
+                    item     = name,
+                    count    = 0
+                }
+                needs[building][reg] = entry
             end
+
+            entry.count = entry.count + needed
         end
     end
 
@@ -418,35 +420,18 @@ function ColonyHelper.formatNeeds(requests)
     -- Flatten and sort
     ------------------------------------------------------
     local list = {}
-    for building, items in pairs(needs) do
-        for _, entry in pairs(items) do
-            table.insert(list, entry)
+    for _, items in pairs(needs) do
+        for _, e in pairs(items) do
+            table.insert(list, e)
         end
     end
 
     table.sort(list, function(a, b)
         if a.building == b.building then
             return a.item < b.item
-        else
-            return a.building < b.building
         end
+        return a.building < b.building
     end)
-
-    ------------------------------------------------------
-    -- Helpers
-    ------------------------------------------------------
-    local function countColor(n)
-        if n <= 2 then
-            return colors.white
-        end
-        if n <= 8 then
-            return colors.yellow
-        end
-        if n <= 16 then
-            return colors.orange
-        end
-        return colors.red
-    end
 
     ------------------------------------------------------
     -- Build output lines
@@ -461,13 +446,9 @@ function ColonyHelper.formatNeeds(requests)
     local lastBuilding = nil
 
     for _, ln in ipairs(list) do
-
-        --------------------------------------------------
-        -- New building section header
-        --------------------------------------------------
         if ln.building ~= lastBuilding then
-            if lastBuilding ~= nil then
-                table.insert(out, {}) -- blank line between buildings
+            if lastBuilding then
+                table.insert(out, {})
             end
 
             table.insert(out, {
@@ -477,12 +458,9 @@ function ColonyHelper.formatNeeds(requests)
             lastBuilding = ln.building
         end
 
-        --------------------------------------------------
-        -- Indented item line
-        --------------------------------------------------
         table.insert(out, {
-            { text = "    " }, -- indentation
-            { text = tostring(ln.count) .. "x ", color = countColor(ln.count) },
+            { text = "    " },
+            { text = tostring(ln.count) .. "x ", color = colors.white },
             { text = ln.item, color = colors.white }
         })
     end
@@ -490,8 +468,9 @@ function ColonyHelper.formatNeeds(requests)
     return out
 end
 
+
 ------------------------------------------------------
--- Format NEEDS list with AE2 READY / PARTIAL / MISSING
+-- Format NEEDS list with AE2 READY/PARTIAL/MISSING
 ------------------------------------------------------
 function ColonyHelper.formatNeedWithME(requests, me)
     local out = {}
@@ -503,28 +482,27 @@ function ColonyHelper.formatNeedWithME(requests, me)
     ------------------------------------------------------
     for _, req in ipairs(requests) do
         local building = req.target or "Unknown"
+        local needed   = req.count or 1
 
-        if req.items then
+        local it = req.items and req.items[1]
+        if it then
+            local reg  = it.name or "unknown"
+            local name = it.displayName or reg
+
             needs[building] = needs[building] or {}
 
-            for _, it in ipairs(req.items) do
-                local reg   = it.name or "unknown"
-                local name  = it.displayName or reg
-                local count = it.count or 1
-
-                local entry = needs[building][reg]
-                if not entry then
-                    entry = {
-                        building = building,
-                        reg      = reg,
-                        item     = name,
-                        count    = 0
-                    }
-                    needs[building][reg] = entry
-                end
-
-                entry.count = entry.count + count
+            local entry = needs[building][reg]
+            if not entry then
+                entry = {
+                    building = building,
+                    reg      = reg,
+                    item     = name,
+                    count    = 0
+                }
+                needs[building][reg] = entry
             end
+
+            entry.count = entry.count + needed
         end
     end
 
@@ -533,12 +511,12 @@ function ColonyHelper.formatNeedWithME(requests, me)
     ------------------------------------------------------
     local list = {}
     for _, items in pairs(needs) do
-        for _, entry in pairs(items) do
-            table.insert(list, entry)
+        for _, e in pairs(items) do
+            table.insert(list, e)
         end
     end
 
-    table.sort(list, function(a,b)
+    table.sort(list, function(a, b)
         if a.building == b.building then
             return a.item < b.item
         end
@@ -553,13 +531,13 @@ function ColonyHelper.formatNeedWithME(requests, me)
     end
 
     ------------------------------------------------------
-    -- Build output
+    -- Build visual output with ME availability
     ------------------------------------------------------
     local lastBuilding = nil
 
     for _, ln in ipairs(list) do
         if ln.building ~= lastBuilding then
-            if lastBuilding ~= nil then
+            if lastBuilding then
                 table.insert(out, {})
             end
 
@@ -570,10 +548,11 @@ function ColonyHelper.formatNeedWithME(requests, me)
             lastBuilding = ln.building
         end
 
-        local need  = ln.count
-        local have  = AE2Helper.getCount(me, ln.reg)
+        local need = ln.count
+        local have = AE2Helper.getCount(me, ln.reg)
 
-        local statusText, statusColor
+        local statusText
+        local statusColor
 
         if have >= need then
             statusText  = "[READY]"
@@ -598,6 +577,7 @@ function ColonyHelper.formatNeedWithME(requests, me)
     return out
 end
 
+
 ------------------------------------------------------
 -- Export all currently needed items from ME to any
 -- adjacent inventory, with confirmation dialog.
@@ -609,20 +589,18 @@ function ColonyHelper.exportNeedsFromME(colony, me, monitor)
     end
 
     --------------------------------------------------
-    -- 1. Collect total needs per registry name
+    -- 1. Collect total needs per registry name (correct)
     --------------------------------------------------
     local requests = colony.getRequests() or {}
-    local needed   = {}
+    local needed = {}
 
     for _, req in ipairs(requests) do
-        if req.items then
-            for _, it in ipairs(req.items) do
-                local reg   = it.name
-                local count = it.count or 1
-                if reg then
-                    needed[reg] = (needed[reg] or 0) + count
-                end
-            end
+        local neededCount = req.count or 1
+        local it = req.items and req.items[1]
+
+        if it and it.name then
+            local reg = it.name
+            needed[reg] = (needed[reg] or 0) + neededCount
         end
     end
 
@@ -723,13 +701,14 @@ local COLONY = "Colony"
 local CITIZENS = "Citizens"
 local VISITORS = "Visitors"
 local NEEDS = "Needs"
+local DEBUG = "Debug"
 local currentState = COLONY
 
 -- Startup
 local config = {}
 config.activityRadius = 40
 config.noPlayerCount = 20 -- 20 loops without player activity shuts the system down
-config.name = "Colony Dashboard v1"
+config.name = "Colony Dashboard v1.1"
 config.skillsPerLine = 6
 config.showCitizenSkill = true
 config.fastUpdate = false
@@ -742,7 +721,7 @@ config.art = {
     "(  _ \\  /__\\  / __)( )_( )(  _ \\(  _  )  /__\\  (  _ \\(  _ \\",
     " )(_) )/(__)\\ \\__ \\ ) _ (  ) _ < )(_)(  /(__)\\  )   / )(_) )",
     "(____/(__)(__)(___/(_) (_)(____/(_____)(__)(__)(_)\\_)(____/",
-    "                                                Version 1",
+    "                                                Version 1.1",
     "",
     "                      Loading..."
 }
@@ -759,6 +738,7 @@ monitor.addTab(COLONY, colors.lightGray)
 monitor.addTab(CITIZENS, colors.brown)
 monitor.addTab(VISITORS, colors.lime)
 monitor.addTab(NEEDS, colors.orange)
+--monitor.addTab(DEBUG, colors.red)
 
 -- Setup menus
 local programMenu = {
@@ -848,6 +828,45 @@ local function dumpToString(t, indent, visited, out)
     return table.concat(out, "\n")
 end
 
+local function dumpToPrintable(t, indent, visited, out)
+    indent = indent or 0
+    visited = visited or {}
+    out = out or {}
+
+    local function pad(n)
+        return string.rep(" ", n)
+    end
+
+    -- recursion guard
+    if visited[t] then
+        table.insert(out, pad(indent) .. "*RECURSION*")
+        return out
+    end
+    visited[t] = true
+
+    for k, v in pairs(t) do
+        local key = tostring(k)
+        local prefix = pad(indent) .. key .. ": "
+
+        if type(v) == "table" then
+            -- opening brace
+            table.insert(out, prefix .. "{")
+
+            -- recurse deeper
+            dumpToPrintable(v, indent + 2, visited, out)
+
+            -- closing brace
+            table.insert(out, pad(indent) .. "}")
+
+        else
+            -- primitive value
+            table.insert(out, prefix .. tostring(v))
+        end
+    end
+
+    return out
+end
+
 ---handle touch
 local function handleTouches()
     while RUNNING do
@@ -916,7 +935,7 @@ local function colonyLogic()
             if currentState == NEEDS then
 
                 local requests = colonyIntegrator.getRequests() or {}
-                if not meBridge then
+                if not ME_DRIVE then
                     --------------------------------------------------
                     -- No ME system: plain needs display
                     --------------------------------------------------
@@ -938,8 +957,15 @@ local function colonyLogic()
 
             -- Logic end
         end
+        if currentState == DEBUG then
+            --local requests = colonyIntegrator.getRequests() or {}
+            local debug = dumpToPrintable(colonyIntegrator)
 
-        ----------------------------------------------------------
+            monitor.clearTab(DEBUG)
+            monitor.printToTab(DEBUG, debug)
+
+        end
+            ----------------------------------------------------------
         -- Player detection
         ----------------------------------------------------------
         players = playerDetector.getPlayersInRange(config.activityRadius)
