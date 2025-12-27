@@ -1,3 +1,11 @@
+-- colony dashboard
+-- version: 1.2
+--
+-- changelog:
+-- 1.2 Added average stats
+-- 1.1 Added AE2
+-- 1.0 Initial release
+
 package.path = package.path .. ";./?.lua"
 
 -- Get all requirements
@@ -256,24 +264,6 @@ function ColonyHelper.formatSkills(skills, perLine, tabulation)
     end)
 
     ------------------------------------------------------
-    -- Color selector (applies ONLY to level number)
-    ------------------------------------------------------
-    local function levelColor(lv, max)
-        max = max or 100
-        local pct = (lv / max) * 100
-
-        if pct <= 10 then return colors.white end
-        if pct <= 20 then return colors.lightGray end
-        if pct <= 30 then return colors.gray end
-        if pct <= 40 then return colors.yellow end
-        if pct <= 50 then return colors.orange end
-        if pct <= 60 then return colors.red end
-        if pct <= 70 then return colors.purple end
-        if pct <= 85 then return colors.blue end
-        return colors.lime
-    end
-
-    ------------------------------------------------------
     -- Build segmented lines
     ------------------------------------------------------
     local result = {}
@@ -305,7 +295,7 @@ function ColonyHelper.formatSkills(skills, perLine, tabulation)
             -- Level number with color
             table.insert(lineParts, {
                 text = tostring(entry.level),
-                color = levelColor(entry.level)
+                color = ColonyHelper.skillColor(entry.level)
             })
 
             -- Separator ", "
@@ -325,7 +315,7 @@ function ColonyHelper.formatSkills(skills, perLine, tabulation)
 end
 
 ------------------------------------------------------
--- Compute average skill level (safe)
+-- Compute average skill level
 ------------------------------------------------------
 function ColonyHelper.getAverageSkill(skills)
     if not skills then
@@ -350,7 +340,7 @@ function ColonyHelper.getAverageSkill(skills)
 end
 
 ------------------------------------------------------
--- Skill color gradient (shared)
+-- Skill color gradient
 ------------------------------------------------------
 function ColonyHelper.skillColor(lv, max)
     max = max or 60
@@ -428,7 +418,7 @@ function ColonyHelper.formatRecruitCost(costs, tabulation)
 end
 
 ------------------------------------------------------
--- Format NEEDS list (correct req.count logic)
+-- Format NEEDS list
 ------------------------------------------------------
 function ColonyHelper.formatNeeds(requests)
     local out = {}
@@ -757,7 +747,7 @@ local currentState = COLONY
 local config = {}
 config.activityRadius = 40
 config.noPlayerCount = 20 -- 20 loops without player activity shuts the system down
-config.name = "Colony Dashboard v1.1"
+config.name = "Colony Dashboard v1.2"
 config.skillsPerLine = 6
 config.showCitizenSkill = true
 config.fastUpdate = false
@@ -770,7 +760,7 @@ config.art = {
     "(  _ \\  /__\\  / __)( )_( )(  _ \\(  _  )  /__\\  (  _ \\(  _ \\",
     " )(_) )/(__)\\ \\__ \\ ) _ (  ) _ < )(_)(  /(__)\\  )   / )(_) )",
     "(____/(__)(__)(___/(_) (_)(____/(_____)(__)(__)(_)\\_)(____/",
-    "                                                Version 1.1",
+    "                                                Version 1.2",
     "",
     "                      Loading..."
 }
