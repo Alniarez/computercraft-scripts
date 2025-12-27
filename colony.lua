@@ -39,11 +39,88 @@ else
     ME_DRIVE = true
 end
 
+-- Debug function
+local function dumpToString(t, indent, visited, out)
+    indent = indent or 0
+    visited = visited or {}
+    out = out or {}
+
+    if visited[t] then
+        table.insert(out, string.rep(" ", indent) .. "*RECURSION*")
+        return table.concat(out, "\n")
+    end
+    visited[t] = true
+
+    for k, v in pairs(t) do
+        local prefix = string.rep(" ", indent) .. tostring(k) .. ": "
+
+        if type(v) == "table" then
+            table.insert(out, prefix .. "{")
+            dumpToString(v, indent + 2, visited, out)
+            table.insert(out, string.rep(" ", indent) .. "}")
+        else
+            table.insert(out, prefix .. tostring(v))
+        end
+    end
+
+    return table.concat(out, "\n")
+end
+
+local function dumpToPrintable(t, indent, visited, out)
+    indent = indent or 0
+    visited = visited or {}
+    out = out or {}
+
+    local function pad(n)
+        return string.rep(" ", n)
+    end
+
+    -- recursion guard
+    if visited[t] then
+        table.insert(out, pad(indent) .. "*RECURSION*")
+        return out
+    end
+    visited[t] = true
+
+    for k, v in pairs(t) do
+        local key = tostring(k)
+        local prefix = pad(indent) .. key .. ": "
+
+        if type(v) == "table" then
+            -- opening brace
+            table.insert(out, prefix .. "{")
+
+            -- recurse deeper
+            dumpToPrintable(v, indent + 2, visited, out)
+
+            -- closing brace
+            table.insert(out, pad(indent) .. "}")
+
+        else
+            -- primitive value
+            table.insert(out, prefix .. tostring(v))
+        end
+    end
+
+    return out
+end
+
+-- Script variables
+local COLONY = "Colony"
+local CITIZENS = "Citizens"
+local VISITORS = "Visitors"
+local NEEDS = "Needs"
+local WORK_ORDERS = "Work Orders"
+local BUILDER = "Builders"
+local DEBUG = "Debug"
+local LOG_TAB = "Log"
+local currentState = COLONY
+
 ------------------------------------------------------
 -- AE2 Helper (cached ME item count)
 ------------------------------------------------------
 local AE2Helper = {
-    cache     = {},
+    cache = {},
     CACHE_TTL = 5000,
 }
 
@@ -69,7 +146,7 @@ function AE2Helper.getCount(me, name)
         return 0
     end
 
-    local now   = os.epoch("utc")
+    local now = os.epoch("utc")
     local entry = AE2Helper.cache[name]
 
     if entry and (now - entry.time) < AE2Helper.CACHE_TTL then
@@ -80,7 +157,7 @@ function AE2Helper.getCount(me, name)
 
     AE2Helper.cache[name] = {
         count = count,
-        time  = now,
+        time = now,
     }
 
     return count
@@ -346,14 +423,30 @@ function ColonyHelper.skillColor(lv, max)
     max = max or 60
     local pct = (lv / max) * 100
 
-    if pct <= 10 then return colors.white end
-    if pct <= 20 then return colors.lightGray end
-    if pct <= 30 then return colors.gray end
-    if pct <= 40 then return colors.yellow end
-    if pct <= 50 then return colors.orange end
-    if pct <= 60 then return colors.red end
-    if pct <= 70 then return colors.purple end
-    if pct <= 85 then return colors.blue end
+    if pct <= 10 then
+        return colors.white
+    end
+    if pct <= 20 then
+        return colors.lightGray
+    end
+    if pct <= 30 then
+        return colors.gray
+    end
+    if pct <= 40 then
+        return colors.yellow
+    end
+    if pct <= 50 then
+        return colors.orange
+    end
+    if pct <= 60 then
+        return colors.red
+    end
+    if pct <= 70 then
+        return colors.purple
+    end
+    if pct <= 85 then
+        return colors.blue
+    end
     return colors.lime
 end
 
@@ -418,7 +511,207 @@ function ColonyHelper.formatRecruitCost(costs, tabulation)
 end
 
 ------------------------------------------------------
--- Format NEEDS list
+-- Format WORK ORDERS (IN PROGRESS)
+------------------------------------------------------
+function ColonyHelper.formatWorkOrders(colony)
+    local out = {}
+
+    if not colony or not colony.getWorkOrders then
+        return {
+            { { text = "Colony API unavailable.", color = colors.red } }
+        }
+    end
+
+    local orders = colony.getWorkOrders() or {}
+
+    if #orders == 0 then
+        return {
+            { { text = "No work orders found.", color = colors.gray } }
+        }
+    end
+
+    local shownAny = false
+
+    for _, order in ipairs(orders) do
+        local orderId = order.id
+        if not orderId then
+            -- Skip malformed orders
+        else
+            local ok, resources = pcall(colony.getWorkOrderResources, orderId)
+
+            if ok and resources and #resources > 0 then
+                --------------------------------------------------
+                -- Check if this order actually needs materials
+                --------------------------------------------------
+                local hasNeeds = false
+                for _, r in ipairs(resources) do
+                    if (r.needed or 0) > 0 then
+                        hasNeeds = true
+                        break
+                    end
+                end
+
+                if hasNeeds then
+                    shownAny = true
+
+                    --------------------------------------------------
+                    -- Work order header
+                    --------------------------------------------------
+                    local title =
+                    order.buildingName
+                            or order.type
+                            or "Work Order"
+
+                    local levelInfo = ""
+                    if order.targetLevel then
+                        levelInfo = " → L" .. tostring(order.targetLevel)
+                    end
+
+                    table.insert(out, {
+                        { text = title .. levelInfo, color = colors.cyan }
+                    })
+
+                    --------------------------------------------------
+                    -- Resource lines
+                    --------------------------------------------------
+                    for _, r in ipairs(resources) do
+                        local need = r.needed or 0
+                        if need > 0 then
+                            local name = r.displayName or r.item or "Unknown"
+
+                            local statusColor
+                            if r.available then
+                                statusColor = colors.green
+                            elseif r.delivering then
+                                statusColor = colors.yellow
+                            else
+                                statusColor = colors.red
+                            end
+
+                            table.insert(out, {
+                                { text = "    " },
+                                { text = tostring(need) .. "x ", color = statusColor },
+                                { text = name, color = colors.white }
+                            })
+                        end
+                    end
+
+                    table.insert(out, {}) -- blank line between orders
+                end
+            end
+        end
+    end
+
+    if not shownAny then
+        table.insert(out, {
+            { text = "No work orders with material requirements.", color = colors.gray }
+        })
+    end
+
+    return out
+end
+
+--------------------------------------------------
+-- Format BUILDER NEEDS
+--------------------------------------------------
+function ColonyHelper.formatBuilderNeeds(colony)
+    local out = {}
+
+    local orders = colony.getWorkOrders() or {}
+
+    if #orders == 0 then
+        return {
+            { { text = "No work orders found.", color = colors.gray } }
+        }
+    end
+
+    for _, order in ipairs(orders) do
+        --------------------------------------------------
+        -- Work order header
+        --------------------------------------------------
+        local title =
+        order.buildingName
+                or order.target
+                or order.name
+                or "Work Order"
+
+        table.insert(out, {
+            { text = "Work Order: ", color = colors.lightGray },
+            { text = title, color = colors.cyan }
+        })
+
+        --------------------------------------------------
+        -- Builder position (required by API)
+        --------------------------------------------------
+        local builderPos = order.builder
+
+        if not builderPos
+                or type(builderPos) ~= "table"
+                or builderPos.x == nil
+                or builderPos.y == nil
+                or builderPos.z == nil
+        then
+            table.insert(out, {
+                { text = "    No builder position available.", color = colors.gray }
+            })
+            table.insert(out, {})
+        else
+            --------------------------------------------------
+            -- Query builder material needs
+            --------------------------------------------------
+            local resources = colony.getBuilderResources(builderPos)
+
+            if not resources or #resources == 0 then
+                table.insert(out, {
+                    { text = "    Builder active, no material requests yet.", color = colors.gray }
+                })
+                table.insert(out, {})
+            else
+                --------------------------------------------------
+                -- Render builder materials (CORRECT FIELDS)
+                --------------------------------------------------
+                for _, it in ipairs(resources) do
+                    local name = it.displayName or "Unknown"
+
+                    local need       = it.needs or 0
+                    local have       = it.available or 0
+                    local delivering = it.delivering or 0
+
+                    -- Skip entries that truly do nothing
+                    if need > 0 then
+                        local color
+                        if have >= need then
+                            color = colors.green
+                        elseif have + delivering > 0 then
+                            color = colors.yellow
+                        else
+                            color = colors.red
+                        end
+
+                        table.insert(out, {
+                            { text = "    " },
+                            { text = have .. " / " .. need .. " ", color = color },
+                            { text = name, color = colors.white },
+                        })
+                    end
+                end
+
+
+                table.insert(out, {})
+            end
+        end
+    end
+
+
+    return out
+end
+
+
+
+
+
+------------------------------------------------------
+-- Format NEEDS list (THIS WAS WRONG)
 ------------------------------------------------------
 function ColonyHelper.formatNeeds(requests)
     local out = {}
@@ -430,12 +723,12 @@ function ColonyHelper.formatNeeds(requests)
     ------------------------------------------------------
     for _, req in ipairs(requests) do
         local building = req.target or "Unknown"
-        local needed   = req.count or 1
+        local needed = req.count or 1
 
         -- Every request has an items[] table with descriptors
         local it = req.items and req.items[1]
         if it then
-            local reg  = it.name or "unknown"
+            local reg = it.name or "unknown"
             local name = it.displayName or reg
 
             needs[building] = needs[building] or {}
@@ -444,9 +737,9 @@ function ColonyHelper.formatNeeds(requests)
             if not entry then
                 entry = {
                     building = building,
-                    reg      = reg,
-                    item     = name,
-                    count    = 0
+                    reg = reg,
+                    item = name,
+                    count = 0
                 }
                 needs[building][reg] = entry
             end
@@ -521,11 +814,11 @@ function ColonyHelper.formatNeedWithME(requests, me)
     ------------------------------------------------------
     for _, req in ipairs(requests) do
         local building = req.target or "Unknown"
-        local needed   = req.count or 1
+        local needed = req.count or 1
 
         local it = req.items and req.items[1]
         if it then
-            local reg  = it.name or "unknown"
+            local reg = it.name or "unknown"
             local name = it.displayName or reg
 
             needs[building] = needs[building] or {}
@@ -534,9 +827,9 @@ function ColonyHelper.formatNeedWithME(requests, me)
             if not entry then
                 entry = {
                     building = building,
-                    reg      = reg,
-                    item     = name,
-                    count    = 0
+                    reg = reg,
+                    item = name,
+                    count = 0
                 }
                 needs[building][reg] = entry
             end
@@ -594,13 +887,13 @@ function ColonyHelper.formatNeedWithME(requests, me)
         local statusColor
 
         if have >= need then
-            statusText  = "[READY]"
+            statusText = "[READY]"
             statusColor = colors.green
         elseif have > 0 then
-            statusText  = "[PARTIAL: " .. have .. "/" .. need .. "]"
+            statusText = "[PARTIAL: " .. have .. "/" .. need .. "]"
             statusColor = colors.yellow
         else
-            statusText  = "[MISSING]"
+            statusText = "[MISSING]"
             statusColor = colors.red
         end
 
@@ -680,12 +973,14 @@ function ColonyHelper.exportNeedsFromME(colony, me, monitor)
         -- Signature 1: exportItem({name=..., count=...}, "side")
         local ok, res = pcall(me.exportItem, { name = name, count = amount }, side)
         if ok and type(res) == "number" and res > 0 then
+            monitor.printToTab(LOG_TAB, name.." x"..amount)
             return res
         end
 
         -- Signature 2: exportItem({name=...}, "side", count)
         ok, res = pcall(me.exportItem, { name = name }, side, amount)
         if ok and type(res) == "number" and res > 0 then
+            monitor.printToTab(LOG_TAB, name.." x"..amount)
             return res
         end
 
@@ -702,7 +997,9 @@ function ColonyHelper.exportNeedsFromME(colony, me, monitor)
             callback = function()
                 monitor.closeDialog()
 
-                local sides       = { "north", "south", "east", "west", "up", "down" }
+                monitor.printToTab(LOG_TAB, "Exporting items:")
+
+                local sides = { "north", "south", "east", "west", "up", "down" }
                 local exportedTot = 0
 
                 -- 4. Perform exports to any adjacent inventories
@@ -710,10 +1007,12 @@ function ColonyHelper.exportNeedsFromME(colony, me, monitor)
                     local remaining = entry.amount
 
                     for _, side in ipairs(sides) do
-                        if remaining <= 0 then break end
+                        if remaining <= 0 then
+                            break
+                        end
                         local moved = tryExport(entry.name, remaining, side)
                         if moved > 0 then
-                            remaining   = remaining - moved
+                            remaining = remaining - moved
                             exportedTot = exportedTot + moved
                         end
                     end
@@ -724,6 +1023,7 @@ function ColonyHelper.exportNeedsFromME(colony, me, monitor)
                 else
                     monitor.showDialog("Exported " .. exportedTot .. " items.", colors.green)
                 end
+                monitor.printToTab(LOG_TAB, "")
             end,
         },
         {
@@ -735,13 +1035,136 @@ function ColonyHelper.exportNeedsFromME(colony, me, monitor)
     })
 end
 
--- Script variables
-local COLONY = "Colony"
-local CITIZENS = "Citizens"
-local VISITORS = "Visitors"
-local NEEDS = "Needs"
-local DEBUG = "Debug"
-local currentState = COLONY
+------------------------------------------------------
+-- Export ALL builder-required materials from ME
+------------------------------------------------------
+function ColonyHelper.exportAllBuilderMaterialsFromME(colony, me, monitor)
+    if not colony or not me then
+        monitor.showDialog("Colony or ME bridge missing.", colors.red)
+        return
+    end
+
+    --------------------------------------------------
+    -- Collect all builders from work orders
+    --------------------------------------------------
+    local orders = colony.getWorkOrders() or {}
+    local builders = {}
+
+    for _, order in ipairs(orders) do
+        if order.builder
+                and order.builder.x
+                and order.builder.y
+                and order.builder.z
+        then
+            local key = order.builder.x .. ":" .. order.builder.y .. ":" .. order.builder.z
+            builders[key] = order.builder
+        end
+    end
+
+    if next(builders) == nil then
+        monitor.showDialog("No active builders found.", colors.gray)
+        return
+    end
+
+    --------------------------------------------------
+    -- Aggregate material needs across all builders
+    --------------------------------------------------
+    local needed = {}
+
+    for _, pos in pairs(builders) do
+        local resources = colony.getBuilderResources(pos)
+        if resources then
+            for _, r in ipairs(resources) do
+                local need = r.needs or 0
+                local have = r.available or 0
+
+                if need > have then
+                    local missing = need - have
+                    local item = r.item and r.item.name
+
+                    if item then
+                        needed[item] = (needed[item] or 0) + missing
+                    end
+                end
+            end
+        end
+    end
+
+    if next(needed) == nil then
+        monitor.showDialog("All builders already have required materials.", colors.green)
+        return
+    end
+
+    --------------------------------------------------
+    -- Build export list from ME availability
+    --------------------------------------------------
+    local exportList = {}
+    local total = 0
+
+    for item, amount in pairs(needed) do
+        local have = AE2Helper.getCount(me, item)
+        if have > 0 then
+            local toExport = math.min(have, amount)
+            table.insert(exportList, { name = item, amount = toExport })
+            total = total + toExport
+        end
+    end
+
+    if total == 0 then
+        monitor.showDialog("ME system has none of the required items.", colors.red)
+        return
+    end
+
+    --------------------------------------------------
+    -- Confirmation dialog
+    --------------------------------------------------
+    monitor.showDialog(
+            "Export " .. total .. " building items from ME?",
+            colors.blue,
+            {
+                {
+                    label = "Yes",
+                    callback = function()
+                        monitor.closeDialog()
+
+                        local sides = { "north", "south", "east", "west", "up", "down" }
+                        local exported = 0
+
+                        for _, entry in ipairs(exportList) do
+                            local remaining = entry.amount
+
+                            for _, side in ipairs(sides) do
+                                if remaining <= 0 then break end
+
+                                local ok, moved = pcall(me.exportItem,
+                                        { name = entry.name, count = remaining },
+                                        side
+                                )
+
+                                if ok and type(moved) == "number" and moved > 0 then
+                                    monitor.printToTab(LOG_TAB, entry.name.." x"..moved)
+                                    remaining = remaining - moved
+                                    exported = exported + moved
+                                end
+                            end
+                        end
+
+                        monitor.showDialog(
+                                "Exported " .. exported .. " items.",
+                                colors.green
+                        )
+                    end
+                },
+                {
+                    label = "No",
+                    callback = function()
+                        monitor.closeDialog()
+                    end
+                }
+            }
+    )
+end
+
 
 -- Startup
 local config = {}
@@ -777,22 +1200,39 @@ monitor.addTab(COLONY, colors.lightGray)
 monitor.addTab(CITIZENS, colors.brown)
 monitor.addTab(VISITORS, colors.lime)
 monitor.addTab(NEEDS, colors.orange)
---monitor.addTab(DEBUG, colors.red)
+--monitor.addTab(WORK_ORDERS, colors.blue)
+monitor.addTab(BUILDER, colors.red)
+--monitor.addTab(DEBUG, colors.white)
+monitor.addTab(LOG_TAB, colors.white)
 
 -- Setup menus
 local programMenu = {
-    { label = "-----", callback = function() end },
+    { label = "-----", callback = function()
+    end },
 }
 
 -- Insert ME export option BEFORE Exit
 if ME_DRIVE then
     table.insert(programMenu, {
-        label = "Export items from ME system",
+        label = "Export Needs from ME system",
         callback = function()
             ColonyHelper.exportNeedsFromME(colonyIntegrator, meBridge, monitor)
         end
     })
+    table.insert(programMenu, {
+        label = "Export Building materials from ME system",
+        callback = function()
+            ColonyHelper.exportAllBuilderMaterialsFromME(colonyIntegrator, meBridge, monitor)
+        end
+    })
 end
+
+table.insert(programMenu, {
+    label = "Clear log",
+    callback = function()
+        monitor.clearTab(LOG_TAB)
+    end
+})
 
 -- Add exit entry (always last)
 table.insert(programMenu, {
@@ -831,7 +1271,6 @@ monitor.addMenu("Options", {
         config.fastUpdate = not config.fastUpdate
     end },
 })
-
 monitor.addMenu("Help", {
     { label = "-----", callback = function()
     end },
@@ -839,72 +1278,6 @@ monitor.addMenu("Help", {
         monitor.showDialog(config.name)
     end },
 })
-
--- Debug function
-local function dumpToString(t, indent, visited, out)
-    indent = indent or 0
-    visited = visited or {}
-    out = out or {}
-
-    if visited[t] then
-        table.insert(out, string.rep(" ", indent) .. "*RECURSION*")
-        return table.concat(out, "\n")
-    end
-    visited[t] = true
-
-    for k, v in pairs(t) do
-        local prefix = string.rep(" ", indent) .. tostring(k) .. ": "
-
-        if type(v) == "table" then
-            table.insert(out, prefix .. "{")
-            dumpToString(v, indent + 2, visited, out)
-            table.insert(out, string.rep(" ", indent) .. "}")
-        else
-            table.insert(out, prefix .. tostring(v))
-        end
-    end
-
-    return table.concat(out, "\n")
-end
-
-local function dumpToPrintable(t, indent, visited, out)
-    indent = indent or 0
-    visited = visited or {}
-    out = out or {}
-
-    local function pad(n)
-        return string.rep(" ", n)
-    end
-
-    -- recursion guard
-    if visited[t] then
-        table.insert(out, pad(indent) .. "*RECURSION*")
-        return out
-    end
-    visited[t] = true
-
-    for k, v in pairs(t) do
-        local key = tostring(k)
-        local prefix = pad(indent) .. key .. ": "
-
-        if type(v) == "table" then
-            -- opening brace
-            table.insert(out, prefix .. "{")
-
-            -- recurse deeper
-            dumpToPrintable(v, indent + 2, visited, out)
-
-            -- closing brace
-            table.insert(out, pad(indent) .. "}")
-
-        else
-            -- primitive value
-            table.insert(out, prefix .. tostring(v))
-        end
-    end
-
-    return out
-end
 
 ---handle touch
 local function handleTouches()
@@ -976,7 +1349,7 @@ local function colonyLogic()
             end
 
             ----------------------------------------------------------
-            -- NEEDS tab logic
+            -- NEEDS tab logic TODO: REMOVE
             ----------------------------------------------------------
             if currentState == NEEDS then
 
@@ -1001,17 +1374,65 @@ local function colonyLogic()
                 end
             end
 
+            ----------------------------------------------------------
+            -- WORK ORDERS tab logic
+            ----------------------------------------------------------
+            if currentState == WORK_ORDERS then
+                local workOrders = ColonyHelper.formatWorkOrders(colonyIntegrator)
+                monitor.clearTab(WORK_ORDERS)
+                monitor.printToTab(WORK_ORDERS, workOrders)
+            end
+            ----------------------------------------------------------
+            -- BUILDER NEEDS tab logic
+            ----------------------------------------------------------
+            if currentState == BUILDER then
+                local workOrders = ColonyHelper.formatBuilderNeeds(colonyIntegrator)
+                monitor.clearTab(BUILDER)
+                monitor.printToTab(BUILDER, workOrders)
+            end
+
+
             -- Logic end
         end
         if currentState == DEBUG then
             --local requests = colonyIntegrator.getRequests() or {}
-            local debug = dumpToPrintable(colonyIntegrator)
+            --local debug = dumpToPrintable(colonyIntegrator)
 
             monitor.clearTab(DEBUG)
-            monitor.printToTab(DEBUG, debug)
+            --monitor.printToTab(DEBUG, debug)
+
+            local orders = colonyIntegrator.getWorkOrders()
+            monitor.clearTab(DEBUG)
+
+            monitor.printToTab(DEBUG, {
+                { text = "getWorkOrders():", color = colors.cyan }
+            })
+
+            monitor.printToTab(DEBUG, dumpToPrintable(orders))
+
+            -- Inspect first work order resources explicitly
+            if orders and orders[1] and orders[1].id then
+                monitor.printToTab(DEBUG, {})
+                monitor.printToTab(DEBUG, {
+                    { text = "getWorkOrderResources(" .. orders[1].id .. "):", color = colors.cyan }
+                })
+
+                local ok, res = pcall(colonyIntegrator.getWorkOrderResources, orders[1].id)
+                if ok then
+                    monitor.printToTab(DEBUG, dumpToPrintable(res))
+                else
+                    monitor.printToTab(DEBUG, {
+                        { text = "Error calling getWorkOrderResources()", color = colors.red }
+                    })
+                end
+            else
+                monitor.printToTab(DEBUG, {
+                    { text = "No valid work order ID found.", color = colors.red }
+                })
+            end
 
         end
-            ----------------------------------------------------------
+        ----------------------------------------------------------
         -- Player detection
         ----------------------------------------------------------
         players = playerDetector.getPlayersInRange(config.activityRadius)
