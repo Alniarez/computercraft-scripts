@@ -211,7 +211,6 @@ end
 ------------------------------------------------------
 function ColonyHelper.formatCitizen(citizen)
     local stateColor = colors.white
-
     if citizen.state == "Sick" then
         stateColor = colors.red
     end
@@ -221,14 +220,21 @@ function ColonyHelper.formatCitizen(citizen)
         job = citizen.work.type
     end
 
-    local table = {
+    local avg = ColonyHelper.getAverageSkill(citizen.skills)
+
+    return {
         { text = citizen.name, color = colors.orange },
         { text = " | ", color = colors.lightGray },
-        { text = job },
+
+        { text = job, color = colors.white },
         { text = " | ", color = colors.lightGray },
-        { text = citizen.state or "Unknown", color = stateColor }
+
+        { text = citizen.state or "Unknown", color = stateColor },
+        { text = " | ", color = colors.lightGray },
+
+        { text = "Avg: ", color = colors.white },
+        { text = tostring(avg), color = ColonyHelper.skillColor(avg) }
     }
-    return table
 end
 
 ------------------------------------------------------
@@ -316,6 +322,49 @@ function ColonyHelper.formatSkills(skills, perLine, tabulation)
     end
 
     return result
+end
+
+------------------------------------------------------
+-- Compute average skill level (safe)
+------------------------------------------------------
+function ColonyHelper.getAverageSkill(skills)
+    if not skills then
+        return 0
+    end
+
+    local total = 0
+    local count = 0
+
+    for _, skill in pairs(skills) do
+        if skill and type(skill.level) == "number" then
+            total = total + skill.level
+            count = count + 1
+        end
+    end
+
+    if count == 0 then
+        return 0
+    end
+
+    return math.floor((total / count) + 0.5)
+end
+
+------------------------------------------------------
+-- Skill color gradient (shared)
+------------------------------------------------------
+function ColonyHelper.skillColor(lv, max)
+    max = max or 60
+    local pct = (lv / max) * 100
+
+    if pct <= 10 then return colors.white end
+    if pct <= 20 then return colors.lightGray end
+    if pct <= 30 then return colors.gray end
+    if pct <= 40 then return colors.yellow end
+    if pct <= 50 then return colors.orange end
+    if pct <= 60 then return colors.red end
+    if pct <= 70 then return colors.purple end
+    if pct <= 85 then return colors.blue end
+    return colors.lime
 end
 
 ------------------------------------------------------
@@ -923,7 +972,14 @@ local function colonyLogic()
                 local visitors = colonyIntegrator.getVisitors()
                 monitor.clearTab(VISITORS)
                 for _, visitor in ipairs(visitors) do
-                    monitor.printToTab(VISITORS, { text = visitor.name, color = colors.orange })
+                    local avg = ColonyHelper.getAverageSkill(visitor.skills)
+
+                    monitor.printToTab(VISITORS, {
+                        { text = visitor.name, color = colors.orange },
+                        { text = " | ", color = colors.lightGray },
+                        { text = "Avg: ", color = colors.white },
+                        { text = tostring(avg), color = ColonyHelper.skillColor(avg) }
+                    })
                     monitor.printToTab(VISITORS, ColonyHelper.formatSkills(visitor.skills, config.skillsPerLine, 2))
                     monitor.printToTab(VISITORS, ColonyHelper.formatRecruitCost(visitor.recruitCost, 4))
                 end
